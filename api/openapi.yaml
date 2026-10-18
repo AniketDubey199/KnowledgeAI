@@ -1,0 +1,279 @@
+openapi: 3.1.0
+info:
+  title: KnowledgeBase AI API
+  version: 1.0.0
+  description: >-
+    Production multi-tenant KnowledgeBase AI API providing durable document ingestion,
+    vector semantic search, and citation-backed Retrieval-Augmented Generation (RAG).
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+paths:
+  /health/live:
+    get:
+      summary: Liveness probe
+      description: Returns 200 OK as long as the process is alive.
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: live
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /health/ready:
+    get:
+      summary: Readiness probe
+      description: Verifies connectivity to PostgreSQL and Redis.
+      responses:
+        '200':
+          description: All infrastructure dependencies are healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+                  timestamp:
+                    type: string
+                  checks:
+                    type: object
+                    properties:
+                      postgres:
+                        type: string
+                        example: up
+                      redis:
+                        type: string
+                        example: up
+        '503':
+          description: One or more dependencies are down
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/register:
+    post:
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, display_name]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                display_name:
+                  type: string
+      responses:
+        '201':
+          description: User registered successfully
+        '409':
+          description: Email already registered
+
+  /auth/login:
+    post:
+      summary: Authenticate user and issue tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Authentication successful, returns JWT access token and sets HttpOnly refresh cookie
+        '401':
+          description: Invalid credentials
+
+  /organizations:
+    post:
+      summary: Create a new organization
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Organization created
+
+  /organizations/{orgID}/documents:
+    post:
+      summary: Upload a document for ingestion
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orgID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Document accepted for asynchronous processing
+
+  /documents/{documentID}:
+    get:
+      summary: Retrieve document status and metadata
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: documentID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document details
+    delete:
+      summary: Delete document and associated vectors
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: documentID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '202':
+          description: Document marked for deletion
+
+  /organizations/{orgID}/search:
+    post:
+      summary: Execute semantic search across ingested documents
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orgID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                top_k:
+                  type: integer
+                  default: 5
+      responses:
+        '200':
+          description: Ranked vector search results
+
+  /organizations/{orgID}/chat:
+    post:
+      summary: Ask question with verifiable citations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orgID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                conversation_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                top_k:
+                  type: integer
+                  default: 5
+                stream:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Synthesized answer with citations or SSE stream
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: DOCUMENT_NOT_READY
+            message:
+              type: string
+              example: The document has not finished processing.
+            request_id:
+              type: string
+              example: req_5b4d8d3a

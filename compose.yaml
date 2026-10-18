@@ -1,0 +1,109 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kb_postgres
+    environment:
+      POSTGRES_USER: kb_user
+      POSTGRES_PASSWORD: kb_password
+      POSTGRES_DB: knowledgebase
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb_user -d knowledgebase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: kb_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kb_migrate
+    entrypoint: ["/app/bin/migrate", "-path", "/app/migrations", "up"]
+    environment:
+      DATABASE_URL: postgres://kb_user:kb_password@postgres:5432/knowledgebase?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kb_api
+    entrypoint: ["/app/bin/api"]
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: development
+      API_ADDR: ":8080"
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://kb_user:kb_password@postgres:5432/knowledgebase?sslmode=disable
+      REDIS_ADDR: redis:6379
+      STORAGE_DRIVER: local
+      LOCAL_STORAGE_PATH: /var/lib/knowledgebase/uploads
+      JWT_SIGNING_KEY: dev-insecure-secret-key-at-least-32-chars-long!
+    volumes:
+      - uploads_data:/var/lib/knowledgebase/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kb_worker
+    entrypoint: ["/app/bin/worker"]
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://kb_user:kb_password@postgres:5432/knowledgebase?sslmode=disable
+      REDIS_ADDR: redis:6379
+      WORKER_CONCURRENCY: 4
+      STORAGE_DRIVER: local
+      LOCAL_STORAGE_PATH: /var/lib/knowledgebase/uploads
+    volumes:
+      - uploads_data:/var/lib/knowledgebase/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
