@@ -14,7 +14,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
+	"knowledgebase-ai/internal/auth"
 	"knowledgebase-ai/internal/config"
+	"knowledgebase-ai/internal/identity"
 	"knowledgebase-ai/internal/middleware"
 	"knowledgebase-ai/internal/observability"
 	"knowledgebase-ai/internal/platform/postgres"
@@ -42,12 +44,16 @@ func main() {
 
 	// 4. Initialize PostgreSQL connection pool
 	var pgClient *postgres.Client
+	var identityRepo identity.Repository
+
 	pgClient, err = postgres.NewClient(ctx, cfg.DatabaseURL)
 	if err != nil {
-		logger.Warn("Failed to establish immediate PostgreSQL connection pool", slog.String("error", err.Error()))
+		logger.Warn("Failed to establish immediate PostgreSQL connection pool; using in-memory identity repo fallback for development", slog.String("error", err.Error()))
+		identityRepo = identity.NewMemoryRepository()
 	} else {
 		logger.Info("PostgreSQL connection pool established")
 		defer pgClient.Close()
+		identityRepo = identity.NewPostgresRepository(pgClient.Pool)
 	}
 
 	// 5. Initialize Redis client
@@ -64,7 +70,18 @@ func main() {
 		}()
 	}
 
-	// 6. Initialize Fiber application with custom error handler
+	// 6. Initialize JWT Manager and Domain Services
+	jwtManager := auth.NewJWTManager(cfg.JWTSigningKey, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
+	authService := auth.NewService(identityRepo, jwtManager, cfg.RefreshTokenTTL)
+	identityService := identity.NewService(identityRepo)
+
+	isSecureCookie := cfg.AppEnv == "production"
+	authHandler := auth.NewHandler(authService, cfg.RefreshTokenTTL, isSecureCookie)
+	identityHandler := identity.NewHandler(identityService)
+
+	jwtAuthMiddleware := auth.JWTMiddleware(jwtManager)
+
+	// 7. Initialize Fiber application with custom error handler
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler:          middleware.FiberErrorHandler(logger),
@@ -73,17 +90,19 @@ func main() {
 		IdleTimeout:           60 * time.Second,
 	})
 
-	// 7. Register standard middlewares
+	// 8. Register standard middlewares
 	app.Use(recover.New())
 	app.Use(cors.New())
 	app.Use(middleware.RequestID())
 	app.Use(middleware.HTTPLogger(logger))
 
-	// 8. Register health routes
+	// 9. Register API v1 routes
 	v1 := app.Group("/api/v1")
 	setupHealthRoutes(v1, pgClient, redisClient)
+	authHandler.RegisterRoutes(v1, jwtAuthMiddleware)
+	identityHandler.RegisterRoutes(v1, jwtAuthMiddleware, identityRepo)
 
-	// 9. Graceful shutdown handler
+	// 10. Graceful shutdown handler
 	shutdownDone := make(chan struct{})
 	go func() {
 		sigChan := make(chan os.Signal, 1)
@@ -100,7 +119,7 @@ func main() {
 		close(shutdownDone)
 	}()
 
-	// 10. Start HTTP listener
+	// 11. Start HTTP listener
 	logger.Info("HTTP server listening", slog.String("addr", cfg.APIAddr))
 	if err := app.Listen(cfg.APIAddr); err != nil && !errors.Is(err, fiber.ErrBadGateway) {
 		logger.Info("Server stopped accepting connections", slog.String("message", err.Error()))

@@ -333,7 +333,7 @@ class PDFDocument:
                 if c_idx == 0:
                     self.ctx.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
                     self.ctx.set_source_rgb(0.15, 0.25, 0.4)
-                elif c_idx == len(row) - 1 and "COMPLETED" in cell:
+                elif c_idx == len(row) - 1 and "COMPLETED" in str(cell):
                     self.ctx.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
                     self.ctx.set_source_rgb(0.1, 0.55, 0.2)
                 else:
@@ -362,7 +362,7 @@ def build_guide_pdf(target_file):
     doc.draw_cover_header(
         title="KnowledgeBase AI — Implementation Manual",
         subtitle="6-Phase Architecture Blueprint, Engineering Rationale & Verification",
-        meta_info="Version 1.0  •  Go + Fiber v2 + PostgreSQL + pgvector + Redis + Asynq + Gemini API"
+        meta_info="Version 1.1  •  Go + Fiber v2 + PostgreSQL + pgvector + Redis + Asynq + Gemini API"
     )
 
     doc.draw_heading1("1. Executive Summary & Purpose")
@@ -416,7 +416,7 @@ def build_guide_pdf(target_file):
     phases_summary = [
         ["Phase", "Scope & Description", "Checkpoint Gate", "Status"],
         ["Phase 1", "Repository Foundation & Infrastructure", "Checkpoint 1: Compiling binaries, Fiber router, migrations, health probes", "COMPLETED"],
-        ["Phase 2", "Identity, Authentication & Tenancy", "Checkpoint 2: Argon2id, JWT/refresh rotation, org RBAC, cross-tenant tests", "PLANNED"],
+        ["Phase 2", "Identity, Authentication & Tenancy", "Checkpoint 2: Argon2id, JWT/refresh rotation, org RBAC, cross-tenant tests", "COMPLETED"],
         ["Phase 3", "Document Uploads & Outbox Pipeline", "Checkpoint 3: Streaming upload, SHA-256, atomic storage, outbox persistence", "PLANNED"],
         ["Phase 4", "Asynq Worker & Vector Ingestion", "Checkpoint 4: Dispatcher, PDF/TXT/MD parsers, chunking, pgvector writes", "PLANNED"],
         ["Phase 5", "Vector Search & RAG Chat Engine", "Checkpoint 5: Cosine search, Gemini generation, verified citations, SSE streaming", "PLANNED"],
@@ -426,22 +426,22 @@ def build_guide_pdf(target_file):
 
     doc.draw_heading2("Detailed Phase Analysis: What, How, and For What Purpose")
 
-    doc.draw_heading3("Phase 1: Repository Foundation & Core Infrastructure (Checkpoint 1)")
+    doc.draw_heading3("Phase 1: Repository Foundation & Core Infrastructure (Checkpoint 1) — COMPLETED")
     doc.draw_bullet("What:", "Establishes Go module structure, Fiber v2 router, configuration loader, PostgreSQL & Redis connection pools, database migrations, and health check endpoints.")
     doc.draw_bullet("How:", "Uses pgxpool with connection limits, go-redis client, standard error envelopes, and a multi-stage Dockerfile running non-root.")
     doc.draw_bullet("Purpose:", "Provides a rock-solid, production-ready substrate ensuring external services can be probed and scaled independently.")
 
-    doc.draw_heading3("Phase 2: Identity, Multi-Tenancy & Authentication (Checkpoint 2)")
-    doc.draw_bullet("What:", "Users, organizations, memberships (owner, admin, member), password hashing, and token issuance.")
-    doc.draw_bullet("How:", "Argon2id password hashing; short-lived (15m) JWT access tokens; cryptographically random refresh tokens stored as hashes in PostgreSQL with family_id reuse detection.")
-    doc.draw_bullet("Purpose:", "Eliminates cross-tenant data leaks and prevents unauthorized data ingestion or retrieval.")
+    doc.draw_heading3("Phase 2: Identity, Multi-Tenancy & Authentication (Checkpoint 2) — COMPLETED")
+    doc.draw_bullet("What:", "User registration, Argon2id password hashing, login, rotating opaque refresh tokens, JWT access tokens, organization lifecycle, and RBAC memberships (owner, admin, member).")
+    doc.draw_bullet("How:", "Argon2id with OWASP parameters (64MB memory, 1 iteration, 4 parallelism); 15m JWT access tokens; cryptographically random refresh tokens stored as SHA-256 hashes in PostgreSQL; family_id reuse revocation; single-transaction organization and owner creation; route-level RequireOrgMembership middleware.")
+    doc.draw_bullet("Purpose:", "Enforces absolute tenant isolation, prevents unauthorized cross-organization data access, and eliminates session hijacking risks.")
 
     doc.draw_heading3("Phase 3: Document Management & Ingestion Outbox (Checkpoint 3)")
     doc.draw_bullet("What:", "Streaming multipart uploads, SHA-256 deduplication, file validation (PDF, TXT, MD), and transactional ingestion records.")
     doc.draw_bullet("How:", "Streams raw bytes directly to storage without buffering in memory; inserts document record, ingestion job, and outbox event inside a single PostgreSQL transaction.")
     doc.draw_bullet("Purpose:", "Prevents memory exhaustion on large file uploads and eliminates race conditions between storage and database state.")
 
-    # ================= PAGE 3: PHASES 4-6 & IN-DEPTH PHASE 1 =================
+    # ================= PAGE 3: PHASES 4-6 & IN-DEPTH PHASE 1 & 2 =================
     doc.new_page()
     doc.draw_heading3("Phase 4: Asynq Ingestion Worker & Vector Ingestion (Checkpoint 4)")
     doc.draw_bullet("What:", "Background task worker consuming outbox events, document parsing, text chunking, and vector embedding generation.")
@@ -458,31 +458,36 @@ def build_guide_pdf(target_file):
     doc.draw_bullet("How:", "Redis sliding-window rate limiters per org/user/endpoint, automated test suites, and RAG benchmark scoring for faithfulness, recall, and latency.")
     doc.draw_bullet("Purpose:", "Guarantees production stability under load and ensures predictable LLM cost and accuracy bounds.")
 
-    doc.draw_heading1("4. Phase 1 Implementation & Deliverables")
+    doc.draw_heading1("4. Phase 2 Implementation & Security Engineering")
     doc.draw_paragraph(
-        "Phase 1 has been completed in its entirety inside the 'Knowledge AI' directory. "
-        "The following deliverables have been built, verified, and tested:"
+        "Phase 2 establishes the identity and security backbone of KnowledgeBase AI. "
+        "All identity constructs, password security algorithms, token rotation lifecycles, and multi-tenant RBAC boundaries have been fully implemented."
     )
 
-    doc.draw_bullet("Fiber v2 Routing & Health Probes:", "Implemented /api/v1/health/live (liveness) and /api/v1/health/ready (dependency probe verifying Postgres & Redis).")
-    doc.draw_bullet("Standardized Error Envelope:", "Engineered global error handling matching TDD Section 5.1 with standard error codes (INVALID_REQUEST, DEPENDENCY_UNAVAILABLE, etc.) and request IDs.")
-    doc.draw_bullet("Connection Pools:", "Configured pgxpool with max 25 connections, 1h lifetime, and Redis client with dial timeouts and pool size 20.")
-    doc.draw_bullet("Database Migrations:", "Four complete versioned up/down SQL migrations: pgvector/pgcrypto extensions, identity/tenancy, documents/jobs/outbox, and conversations/citations.")
-    doc.draw_bullet("Multi-Stage Containerization:", "Built non-root Dockerfile and compose.yaml orchestrating PostgreSQL 16 pgvector, Redis 7, migration runner, API server, and Asynq worker.")
-    doc.draw_bullet("Automated Test Suite:", "Created unit tests for configuration loading, error envelope serialization, and health routing. Tests executed with 100% pass rate.")
+    doc.draw_bullet("Argon2id Password Security:", "Complies with OWASP password storage recommendations. Uses 64MB memory, 1 iteration, 4 parallel threads, 16-byte random salt, and 32-byte key length. Verified with constant-time equality checks.")
+    doc.draw_bullet("Dual-Token Lifecycle:", "Short-lived (15-minute) HMAC-SHA256 JWT access tokens containing user_id and email claims. Opaque 32-byte refresh tokens stored exclusively as SHA-256 hashes in PostgreSQL.")
+    doc.draw_bullet("Session Family Reuse Detection:", "Each refresh chain shares a unique family_id. When an already-rotated or revoked token is presented, the system revokes the entire session family immediately, thwarting token theft attempts.")
+    doc.draw_bullet("HttpOnly Cookie Delivery:", "In accordance with TDD Section 5.2, refresh tokens are never returned in JSON response bodies or stored in localStorage. They are delivered via HttpOnly, Secure, SameSite=Lax cookies with path /api/v1/auth.")
+    doc.draw_bullet("Single-Transaction Organization Provisioning:", "POST /api/v1/organizations creates both the organization entity and the creator's owner membership within a single atomic database transaction.")
+    doc.draw_bullet("Tenant Isolation & Role Weights:", "RequireOrgMembership middleware extracts :orgID, parses UUID, verifies membership from DB, and enforces role hierarchies (owner:3, admin:2, member:1). Prevents cross-tenant access with 403 Forbidden.")
+    doc.draw_bullet("Last-Owner Invariant:", "Explicit business rule and test preventing an organization from deleting or unassigning its last remaining owner.")
 
-    # ================= PAGE 4: ARTIFACTS, VERIFICATION & NEXT STEPS =================
+    # ================= PAGE 4: CHECKPOINT 2 VERIFICATION & ARTIFACTS =================
     doc.new_page()
-    doc.draw_heading1("5. Checkpoint 1 Verification Report")
+    doc.draw_heading1("5. Checkpoint 2 Verification Report")
     
     doc.draw_callout(
-        "Checkpoint 1 Verification Results: PASSED",
+        "Checkpoint 2 Verification Results: ALL TESTS PASSED",
         [
-            "✓ Go Build: Successfully compiled cmd/api, cmd/worker, and cmd/migrate into bin/ without warnings.",
-            "✓ Unit Tests: Tests in tests/unit/ (config, error envelope, health routing) passed in 0.005s.",
-            "✓ Architecture Boundaries: Handler -> Service -> Repository -> Platform hierarchy strictly isolated.",
-            "✓ Memory Safety: Fiber context fasthttp pointers are isolated from long-running contexts.",
-            "✓ Docker Stack: compose.yaml defines healthchecks, migration ordering, and persistent volumes."
+            "✓ Password Hashing: Argon2id generation and verification succeeded (0.15s).",
+            "✓ JWT Validation: Signatures, expiration limits, and tamper detection confirmed (0.10s).",
+            "✓ Registration & Conflict: Case normalization and 409 duplicate email conflict verified.",
+            "✓ Login & Cookie Security: Returned 200 OK, issued JWT, and set HttpOnly refresh cookie.",
+            "✓ Token Rotation: /api/v1/auth/refresh rotated token and issued fresh JWT access token.",
+            "✓ Family Reuse Detection: Presenting old refresh token revoked entire family (401 Unauthorized).",
+            "✓ Cross-Tenant Isolation: User B forbidden (403) from accessing User A's organization.",
+            "✓ RBAC Enforcement: Members prohibited from inviting users; admins granted privileges.",
+            "✓ Invariant Protection: Removal of the final owner rejected with 400 Bad Request."
         ],
         bg_rgb=(0.94, 0.99, 0.95),
         border_rgb=(0.1, 0.6, 0.25)
@@ -490,34 +495,42 @@ def build_guide_pdf(target_file):
 
     doc.draw_heading1("6. Repository Structure in 'Knowledge AI'")
     doc.draw_paragraph(
-        "All code, configurations, database migrations, and operational tooling reside inside the dedicated directory:"
+        "The project layout adheres to clean architecture principles with clear domain separation:"
     )
 
     repo_files = [
         ["Directory / File", "Purpose"],
-        ["cmd/api/main.go", "HTTP entrypoint initializing Fiber v2, pgxpool, Redis, and health routes."],
+        ["cmd/api/main.go", "HTTP entrypoint initializing Fiber v2, repositories, auth routes, and health probes."],
         ["cmd/worker/main.go", "Background process initializing Asynq server, Redis client, and graceful shutdown."],
         ["cmd/migrate/main.go", "Database migration CLI supporting 'up', 'down', and 'version' commands."],
-        ["internal/config/config.go", "Strongly-typed environment parsing and validation with production rules."],
-        ["internal/middleware/error_handler.go", "Standardized JSON error envelope masking raw SQL and internal traces."],
-        ["internal/middleware/request_id.go", "X-Request-ID propagation and structured access logging middleware."],
-        ["internal/platform/postgres/postgres.go", "Resilient pgxpool connection management and health pinging."],
-        ["internal/platform/redis/redis.go", "Redis client wrapper with timeouts and health checking."],
-        ["internal/platform/storage/storage.go", "Atomic file storage driver writing via temporary files to avoid partial writes."],
-        ["migrations/*.sql", "Versioned SQL migrations (000001 to 000004) covering identity, vector chunks, and RAG."],
-        ["compose.yaml & Dockerfile", "Production-aligned container definitions with non-root security principles."],
-        ["Makefile", "Standardized commands for build, test, docker, and migration workflows."]
+        ["internal/apperror/errors.go", "Centralized standard error envelope (TDD §5.1) and domain error codes."],
+        ["internal/apperror/context.go", "Context extraction utilities for authenticated user_id and tenant boundaries."],
+        ["internal/auth/password.go", "OWASP-compliant Argon2id password hashing and constant-time verification."],
+        ["internal/auth/jwt.go", "HMAC-SHA256 JWT access token minting and signature validation."],
+        ["internal/auth/token.go", "Cryptographic random token generation and SHA-256 bytea hashing."],
+        ["internal/auth/service.go", "Authentication workflows: signup, login, family rotation, and logout."],
+        ["internal/auth/handler.go", "HTTP endpoints for /api/v1/auth with HttpOnly refresh cookie management."],
+        ["internal/auth/middleware.go", "JWTMiddleware validating Bearer tokens and setting context locals."],
+        ["internal/identity/models.go", "Domain entities: User, Organization, Membership, RefreshSession."],
+        ["internal/identity/repository.go", "Repository interface for persistent and test storage."],
+        ["internal/identity/postgres_repo.go", "PostgreSQL implementation utilizing pgxpool.Pool."],
+        ["internal/identity/memory_repo.go", "Thread-safe in-memory repository for unit and integration testing."],
+        ["internal/identity/service.go", "Organization creation, member management, and last-owner protection."],
+        ["internal/identity/handler.go", "HTTP endpoints for /api/v1/organizations with RBAC controls."],
+        ["internal/identity/middleware.go", "RequireOrgMembership middleware enforcing tenant isolation."],
+        ["tests/unit/auth_test.go", "Unit tests for password hashing, JWTs, rotation, and reuse revocation."],
+        ["tests/unit/tenancy_test.go", "Unit tests for multi-tenancy, cross-tenant denial, and RBAC roles."]
     ]
     doc.draw_table(repo_files[0], repo_files[1:], [180, 315])
 
     doc.draw_heading1("7. Instructions for Pushing to GitHub")
     doc.draw_paragraph(
-        "Phase 1 is complete and verified against all Checkpoint 1 criteria. "
-        "The repository is cleanly initialized with an initial commit ready to be pushed to your remote GitHub repository."
+        "Phase 2 is complete, tested, and verified against Checkpoint 2. "
+        "Run the following git commands inside '/home/lucifer/Knowledge AI' to push the updates to your repository:"
     )
-    doc.draw_bullet("Step 1:", "Create a new repository on GitHub (e.g., 'Knowledge-AI').")
-    doc.draw_bullet("Step 2:", "Add your remote: git remote add origin https://github.com/<your-username>/Knowledge-AI.git")
-    doc.draw_bullet("Step 3:", "Push your code: git branch -M main && git push -u origin main")
+    doc.draw_bullet("Step 1:", "Stage all new and updated files: git add .")
+    doc.draw_bullet("Step 2:", "Commit Phase 2 changes: git commit -m 'feat(phase-2): identity, multi-tenancy, and authentication with token rotation'")
+    doc.draw_bullet("Step 3:", "Push to remote repository: git push origin main")
 
     doc.finish()
 

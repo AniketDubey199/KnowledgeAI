@@ -5,76 +5,48 @@ import (
 	"log/slog"
 
 	"github.com/gofiber/fiber/v2"
+
+	"knowledgebase-ai/internal/apperror"
 )
 
-// Standard error codes defined in TDD Section 5.1
+// Re-export common error codes for backward compatibility
 const (
-	ErrCodeInvalidRequest       = "INVALID_REQUEST"
-	ErrCodeInvalidFileType      = "INVALID_FILE_TYPE"
-	ErrCodeInvalidCredentials   = "INVALID_CREDENTIALS"
-	ErrCodeTokenExpired         = "TOKEN_EXPIRED"
-	ErrCodeForbidden            = "FORBIDDEN"
-	ErrCodeResourceNotFound     = "RESOURCE_NOT_FOUND"
-	ErrCodeResourceConflict     = "RESOURCE_CONFLICT"
-	ErrCodeDuplicateRequest     = "DUPLICATE_REQUEST"
-	ErrCodeFileTooLarge         = "FILE_TOO_LARGE"
-	ErrCodeDocumentNotReady     = "DOCUMENT_NOT_READY"
-	ErrCodeInsufficientEvidence = "INSUFFICIENT_EVIDENCE"
-	ErrCodeRateLimited          = "RATE_LIMITED"
-	ErrCodeQuotaExceeded        = "QUOTA_EXCEEDED"
-	ErrCodeLLMProviderError     = "LLM_PROVIDER_ERROR"
-	ErrCodeDependencyUnavailable = "DEPENDENCY_UNAVAILABLE"
-	ErrCodeUpstreamTimeout      = "UPSTREAM_TIMEOUT"
-	ErrCodeInternalError        = "INTERNAL_ERROR"
+	ErrCodeInvalidRequest        = apperror.ErrCodeInvalidRequest
+	ErrCodeInvalidFileType       = apperror.ErrCodeInvalidFileType
+	ErrCodeInvalidCredentials    = apperror.ErrCodeInvalidCredentials
+	ErrCodeTokenExpired          = apperror.ErrCodeTokenExpired
+	ErrCodeForbidden             = apperror.ErrCodeForbidden
+	ErrCodeResourceNotFound      = apperror.ErrCodeResourceNotFound
+	ErrCodeResourceConflict      = apperror.ErrCodeResourceConflict
+	ErrCodeDuplicateRequest      = apperror.ErrCodeDuplicateRequest
+	ErrCodeFileTooLarge          = apperror.ErrCodeFileTooLarge
+	ErrCodeDocumentNotReady      = apperror.ErrCodeDocumentNotReady
+	ErrCodeInsufficientEvidence  = apperror.ErrCodeInsufficientEvidence
+	ErrCodeRateLimited           = apperror.ErrCodeRateLimited
+	ErrCodeQuotaExceeded         = apperror.ErrCodeQuotaExceeded
+	ErrCodeLLMProviderError      = apperror.ErrCodeLLMProviderError
+	ErrCodeDependencyUnavailable = apperror.ErrCodeDependencyUnavailable
+	ErrCodeUpstreamTimeout       = apperror.ErrCodeUpstreamTimeout
+	ErrCodeInternalError         = apperror.ErrCodeInternalError
 )
 
-// ErrorDetail represents the nested error envelope specified by the TDD.
-type ErrorDetail struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id,omitempty"`
-}
+// Type aliases for convenience
+type AppError = apperror.AppError
+type ErrorResponse = apperror.ErrorResponse
+type ErrorDetail = apperror.ErrorDetail
 
-// ErrorResponse represents the outer response body for all API errors.
-type ErrorResponse struct {
-	Error ErrorDetail `json:"error"`
-}
-
-// AppError is an explicit domain error with an HTTP status code and an API error code.
-type AppError struct {
-	StatusCode int
-	Code       string
-	Message    string
-	Internal   error
-}
-
-func (e *AppError) Error() string {
-	if e.Internal != nil {
-		return e.Message + ": " + e.Internal.Error()
-	}
-	return e.Message
-}
-
-// NewAppError creates a new domain AppError.
-func NewAppError(statusCode int, code, message string, internal error) *AppError {
-	return &AppError{
-		StatusCode: statusCode,
-		Code:       code,
-		Message:    message,
-		Internal:   internal,
-	}
-}
+var NewAppError = apperror.NewAppError
 
 // FiberErrorHandler catches all unhandled errors and formats them into the standard error envelope.
 func FiberErrorHandler(logger *slog.Logger) fiber.ErrorHandler {
 	return func(c *fiber.Ctx, err error) error {
 		reqID, _ := c.Locals("requestid").(string)
 
-		var appErr *AppError
+		var appErr *apperror.AppError
 		var fiberErr *fiber.Error
 
 		statusCode := fiber.StatusInternalServerError
-		code := ErrCodeInternalError
+		code := apperror.ErrCodeInternalError
 		message := "An internal server error occurred."
 
 		if errors.As(err, &appErr) {
@@ -94,21 +66,21 @@ func FiberErrorHandler(logger *slog.Logger) fiber.ErrorHandler {
 			message = fiberErr.Message
 			switch statusCode {
 			case fiber.StatusBadRequest:
-				code = ErrCodeInvalidRequest
+				code = apperror.ErrCodeInvalidRequest
 			case fiber.StatusNotFound:
-				code = ErrCodeResourceNotFound
+				code = apperror.ErrCodeResourceNotFound
 			case fiber.StatusForbidden:
-				code = ErrCodeForbidden
+				code = apperror.ErrCodeForbidden
 			case fiber.StatusUnauthorized:
-				code = ErrCodeInvalidCredentials
+				code = apperror.ErrCodeInvalidCredentials
 			case fiber.StatusRequestEntityTooLarge:
-				code = ErrCodeFileTooLarge
+				code = apperror.ErrCodeFileTooLarge
 			case fiber.StatusTooManyRequests:
-				code = ErrCodeRateLimited
+				code = apperror.ErrCodeRateLimited
 			case fiber.StatusServiceUnavailable:
-				code = ErrCodeDependencyUnavailable
+				code = apperror.ErrCodeDependencyUnavailable
 			default:
-				code = ErrCodeInternalError
+				code = apperror.ErrCodeInternalError
 			}
 		} else {
 			// Never expose raw SQL errors, stack traces or credentials to clients
@@ -119,8 +91,8 @@ func FiberErrorHandler(logger *slog.Logger) fiber.ErrorHandler {
 			)
 		}
 
-		return c.Status(statusCode).JSON(ErrorResponse{
-			Error: ErrorDetail{
+		return c.Status(statusCode).JSON(apperror.ErrorResponse{
+			Error: apperror.ErrorDetail{
 				Code:      code,
 				Message:   message,
 				RequestID: reqID,
