@@ -16,11 +16,13 @@ import (
 
 	"knowledgebase-ai/internal/auth"
 	"knowledgebase-ai/internal/config"
+	"knowledgebase-ai/internal/documents"
 	"knowledgebase-ai/internal/identity"
 	"knowledgebase-ai/internal/middleware"
 	"knowledgebase-ai/internal/observability"
 	"knowledgebase-ai/internal/platform/postgres"
 	"knowledgebase-ai/internal/platform/redis"
+	"knowledgebase-ai/internal/platform/storage"
 )
 
 func main() {
@@ -45,15 +47,18 @@ func main() {
 	// 4. Initialize PostgreSQL connection pool
 	var pgClient *postgres.Client
 	var identityRepo identity.Repository
+	var docRepo documents.Repository
 
 	pgClient, err = postgres.NewClient(ctx, cfg.DatabaseURL)
 	if err != nil {
-		logger.Warn("Failed to establish immediate PostgreSQL connection pool; using in-memory identity repo fallback for development", slog.String("error", err.Error()))
+		logger.Warn("Failed to establish immediate PostgreSQL connection pool; using in-memory repo fallbacks for development", slog.String("error", err.Error()))
 		identityRepo = identity.NewMemoryRepository()
+		docRepo = documents.NewMemoryRepository()
 	} else {
 		logger.Info("PostgreSQL connection pool established")
 		defer pgClient.Close()
 		identityRepo = identity.NewPostgresRepository(pgClient.Pool)
+		docRepo = documents.NewPostgresRepository(pgClient.Pool)
 	}
 
 	// 5. Initialize Redis client
@@ -70,39 +75,50 @@ func main() {
 		}()
 	}
 
-	// 6. Initialize JWT Manager and Domain Services
+	// 6. Initialize File Storage
+	store, err := storage.NewLocalStorage(cfg.LocalStoragePath)
+	if err != nil {
+		logger.Error("Failed to initialize local file storage", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
+	// 7. Initialize JWT Manager and Domain Services
 	jwtManager := auth.NewJWTManager(cfg.JWTSigningKey, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
 	authService := auth.NewService(identityRepo, jwtManager, cfg.RefreshTokenTTL)
 	identityService := identity.NewService(identityRepo)
+	docService := documents.NewService(docRepo, store, cfg.MaxUploadBytes)
 
 	isSecureCookie := cfg.AppEnv == "production"
 	authHandler := auth.NewHandler(authService, cfg.RefreshTokenTTL, isSecureCookie)
 	identityHandler := identity.NewHandler(identityService)
+	docHandler := documents.NewHandler(docService, identityRepo)
 
 	jwtAuthMiddleware := auth.JWTMiddleware(jwtManager)
 
-	// 7. Initialize Fiber application with custom error handler
+	// 8. Initialize Fiber application with custom error handler
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler:          middleware.FiberErrorHandler(logger),
 		ReadTimeout:           15 * time.Second,
 		WriteTimeout:          15 * time.Second,
 		IdleTimeout:           60 * time.Second,
+		BodyLimit:             int(cfg.MaxUploadBytes) + 1024*1024, // Extra 1MB headroom for multipart boundary
 	})
 
-	// 8. Register standard middlewares
+	// 9. Register standard middlewares
 	app.Use(recover.New())
 	app.Use(cors.New())
 	app.Use(middleware.RequestID())
 	app.Use(middleware.HTTPLogger(logger))
 
-	// 9. Register API v1 routes
+	// 10. Register API v1 routes
 	v1 := app.Group("/api/v1")
 	setupHealthRoutes(v1, pgClient, redisClient)
 	authHandler.RegisterRoutes(v1, jwtAuthMiddleware)
 	identityHandler.RegisterRoutes(v1, jwtAuthMiddleware, identityRepo)
+	docHandler.RegisterRoutes(v1, jwtAuthMiddleware)
 
-	// 10. Graceful shutdown handler
+	// 11. Graceful shutdown handler
 	shutdownDone := make(chan struct{})
 	go func() {
 		sigChan := make(chan os.Signal, 1)
@@ -119,7 +135,7 @@ func main() {
 		close(shutdownDone)
 	}()
 
-	// 11. Start HTTP listener
+	// 12. Start HTTP listener
 	logger.Info("HTTP server listening", slog.String("addr", cfg.APIAddr))
 	if err := app.Listen(cfg.APIAddr); err != nil && !errors.Is(err, fiber.ErrBadGateway) {
 		logger.Info("Server stopped accepting connections", slog.String("message", err.Error()))
